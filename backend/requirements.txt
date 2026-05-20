@@ -7,7 +7,7 @@ sqlalchemy
 psycopg2-binary
 alembic
 
-elasticsearch
+elasticsearch>=8.13,<9
 neo4j
 redis
 

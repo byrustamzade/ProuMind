@@ -15,6 +15,7 @@ from app.models.source import Source  # noqa: F401
 from app.schemas.document import DocumentResponse
 from app.services.chunking_service import chunking_service
 from app.services.pdf_service import pdf_service
+from app.services.elasticsearch_service import elasticsearch_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger("uvicorn.error")
@@ -42,10 +43,10 @@ def _sanitize_filename(filename: str) -> str:
 
 def _build_document_response(document: Document, db: Session) -> DocumentResponse:
     chunks_count = (
-        db.query(func.count(Chunk.id))
-        .filter(Chunk.document_id == document.id)
-        .scalar()
-    ) or 0
+                       db.query(func.count(Chunk.id))
+                       .filter(Chunk.document_id == document.id)
+                       .scalar()
+                   ) or 0
 
     return DocumentResponse(
         id=document.id,
@@ -147,18 +148,31 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
         db.add(document)
         db.flush()
 
-        db.add_all(
-            [
-                Chunk(
-                    document_id=document.id,
-                    chunk_index=index,
-                    text=chunk_text,
-                    token_count=None,
-                    page_number=None,
-                )
-                for index, chunk_text in enumerate(chunks)
-            ]
-        )
+        created_chunks = [
+            Chunk(
+                document_id=document.id,
+                chunk_index=index,
+                text=chunk_text,
+                token_count=None,
+                page_number=None,
+            )
+            for index, chunk_text in enumerate(chunks)
+        ]
+
+        db.add_all(created_chunks)
+        db.flush()
+
+        for chunk in created_chunks:
+            elasticsearch_service.index_chunk(
+                chunk_id=chunk.id,
+                document_id=document.id,
+                document_title=document.title,
+                source_type=document.source_type,
+                chunk_index=chunk.chunk_index,
+                text=chunk.text,
+                created_at=chunk.created_at.isoformat(),
+            )
+
         db.commit()
         logger.info(
             "Upload persisted: filename=%s chunks=%s total_elapsed=%.2fs",
@@ -188,20 +202,28 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 def upload_pdf(
-    response: Response,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+        response: Response,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
 ):
     return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.post("", response_model=DocumentResponse, include_in_schema=False)
 def upload_pdf_alias(
-    response: Response,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+        response: Response,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
 ):
     return _ingest_pdf(file=file, db=db, response=response)
+
+
+@router.get("/search")
+def search_documents(query: str, size: int = 5):
+    return {
+        "query": query,
+        "results": elasticsearch_service.search(query=query, size=size),
+    }
 
 
 @router.get("", response_model=list[DocumentResponse])
