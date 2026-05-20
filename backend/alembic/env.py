@@ -19,6 +19,10 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 from app.db.base import Base
+from app.models.chunk import Chunk  # noqa: F401
+from app.models.document import Document  # noqa: F401
+from app.models.ingestion_job import IngestionJob  # noqa: F401
+from app.models.source import Source  # noqa: F401
 
 target_metadata = Base.metadata
 

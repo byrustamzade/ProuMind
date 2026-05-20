@@ -12,8 +12,13 @@ neo4j
 redis
 
 llama-index
+llama-index-core
 llama-index-embeddings-huggingface
 sentence-transformers
 
 pypdf
 python-multipart
+
+pdf2image
+pytesseract
+pillow

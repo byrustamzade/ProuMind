@@ -3,8 +3,7 @@ from pypdf import PdfReader
 
 class PdfService:
     def extract_text(self, file_path: str) -> str:
-        reader = PdfReader(file_path)
-
+        reader = PdfReader(file_path, strict=False)
         pages_text: list[str] = []
 
         for page in reader.pages:

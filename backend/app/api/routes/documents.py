@@ -1,19 +1,23 @@
 import hashlib
+import logging
 import re
+import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.models.source import Source  # noqa: F401
 from app.schemas.document import DocumentResponse
 from app.services.chunking_service import chunking_service
 from app.services.pdf_service import pdf_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+logger = logging.getLogger("uvicorn.error")
 
 STORAGE_DIR = Path("storage/documents")
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,7 +57,8 @@ def _build_document_response(document: Document, db: Session) -> DocumentRespons
     )
 
 
-def _ingest_pdf(file: UploadFile, db: Session) -> DocumentResponse:
+def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None) -> DocumentResponse:
+    started_at = time.perf_counter()
     filename = (file.filename or "").strip()
     if not filename:
         raise HTTPException(
@@ -68,6 +73,7 @@ def _ingest_pdf(file: UploadFile, db: Session) -> DocumentResponse:
         )
 
     file_bytes = file.file.read()
+    logger.info("Upload received: filename=%s bytes=%s", filename, len(file_bytes))
     if not file_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -87,6 +93,9 @@ def _ingest_pdf(file: UploadFile, db: Session) -> DocumentResponse:
         .first()
     )
     if existing_document:
+        logger.info("Duplicate upload detected: filename=%s hash=%s", filename, content_hash[:12])
+        if response is not None:
+            response.status_code = status.HTTP_200_OK
         return _build_document_response(existing_document, db)
 
     safe_filename = _sanitize_filename(filename)
@@ -95,10 +104,17 @@ def _ingest_pdf(file: UploadFile, db: Session) -> DocumentResponse:
 
     try:
         raw_text = pdf_service.extract_text(str(file_path)).strip()
+        logger.info(
+            "Text extracted: filename=%s chars=%s elapsed=%.2fs",
+            filename,
+            len(raw_text),
+            time.perf_counter() - started_at,
+        )
     except Exception as error:
         file_path.unlink(missing_ok=True)
+        logger.exception("Text extraction failed: filename=%s", filename)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to extract text from the PDF: {error}",
         )
 
@@ -144,9 +160,16 @@ def _ingest_pdf(file: UploadFile, db: Session) -> DocumentResponse:
             ]
         )
         db.commit()
+        logger.info(
+            "Upload persisted: filename=%s chunks=%s total_elapsed=%.2fs",
+            filename,
+            len(chunks),
+            time.perf_counter() - started_at,
+        )
     except Exception as error:
         db.rollback()
         file_path.unlink(missing_ok=True)
+        logger.exception("Failed to save document metadata: filename=%s", filename)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save document metadata: {error}",
@@ -165,18 +188,20 @@ def _ingest_pdf(file: UploadFile, db: Session) -> DocumentResponse:
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 def upload_pdf(
+    response: Response,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    return _ingest_pdf(file=file, db=db)
+    return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.post("", response_model=DocumentResponse, include_in_schema=False)
 def upload_pdf_alias(
+    response: Response,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    return _ingest_pdf(file=file, db=db)
+    return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.get("", response_model=list[DocumentResponse])
