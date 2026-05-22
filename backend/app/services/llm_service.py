@@ -36,7 +36,13 @@ Answer:
 
     def _generate_with_ollama(self, question: str, context: str) -> str:
         prompt = self._build_prompt(question, context)
+        return self._generate_raw_with_ollama(prompt)
 
+    def _generate_with_openai(self, question: str, context: str) -> str:
+        prompt = self._build_prompt(question, context)
+        return self._generate_raw_with_openai(prompt)
+
+    def _generate_raw_with_ollama(self, prompt: str) -> str:
         response = requests.post(
             f"{settings.ollama_base_url}/api/chat",
             json={
@@ -57,13 +63,11 @@ Answer:
 
         return data["message"]["content"].strip()
 
-    def _generate_with_openai(self, question: str, context: str) -> str:
+    def _generate_raw_with_openai(self, prompt: str) -> str:
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
 
         client = OpenAI(api_key=settings.openai_api_key)
-
-        prompt = self._build_prompt(question, context)
 
         response = client.responses.create(
             model=settings.openai_model,
@@ -71,6 +75,14 @@ Answer:
         )
 
         return response.output_text.strip()
+
+    def generate_raw(self, prompt: str) -> str:
+        provider = settings.llm_provider.lower()
+
+        if provider == "openai":
+            return self._generate_raw_with_openai(prompt)
+
+        return self._generate_raw_with_ollama(prompt)
 
 
 llm_service = LLMService()

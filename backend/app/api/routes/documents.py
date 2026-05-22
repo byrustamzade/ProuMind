@@ -18,6 +18,8 @@ from app.services.pdf_service import pdf_service
 from app.services.elasticsearch_service import elasticsearch_service
 from app.services.embedding_service import embedding_service
 from app.services.retrieval_service import retrieval_service
+from app.services.knowledge_extraction_service import knowledge_extraction_service
+from app.services.neo4j_service import neo4j_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger("uvicorn.error")
@@ -178,6 +180,45 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
                 created_at=chunk.created_at.isoformat(),
             )
 
+        neo4j_service.upsert_document(
+            document_id=document.id,
+            title=document.title,
+            source_type=document.source_type,
+        )
+
+        knowledge_graph = knowledge_extraction_service.extract(raw_text)
+
+        for entity in knowledge_graph.get("entities", []):
+            name = entity.get("name")
+            entity_type = entity.get("type", "Other")
+
+            if not name:
+                continue
+
+            neo4j_service.link_document_to_entity(
+                document_id=document.id,
+                entity_name=name,
+                entity_type=entity_type,
+            )
+
+        for relationship in knowledge_graph.get("relationships", []):
+            from_name = relationship.get("from")
+            from_type = relationship.get("from_type", "Other")
+            relation = relationship.get("relation", "RELATED_TO")
+            to_name = relationship.get("to")
+            to_type = relationship.get("to_type", "Other")
+
+            if not from_name or not to_name:
+                continue
+
+            neo4j_service.create_entity_relationship(
+                from_name=from_name,
+                from_type=from_type,
+                relation=relation,
+                to_name=to_name,
+                to_type=to_type,
+            )
+            
         db.commit()
         logger.info(
             "Upload persisted: filename=%s chunks=%s total_elapsed=%.2fs",
