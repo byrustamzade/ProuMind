@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, status
 from sqlalchemy import text
 
 from app.api.routes.documents import router as documents_router
+from app.api.routes.ask import router as ask_router
 from app.core.config import settings
 from app.db.session import SessionLocal
 
@@ -12,6 +13,7 @@ app = FastAPI(
 )
 
 app.include_router(documents_router)
+app.include_router(ask_router)
 
 
 @app.get("/")
