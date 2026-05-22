@@ -23,6 +23,12 @@ class ElasticsearchService:
                     "source_type": {"type": "keyword"},
                     "chunk_index": {"type": "integer"},
                     "text": {"type": "text"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": 384,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
                     "created_at": {"type": "date"},
                 }
             },
@@ -36,6 +42,7 @@ class ElasticsearchService:
         source_type: str,
         chunk_index: int,
         text: str,
+        embedding: list[float],
         created_at: str,
     ):
         self.ensure_index()
@@ -50,11 +57,12 @@ class ElasticsearchService:
                 "source_type": source_type,
                 "chunk_index": chunk_index,
                 "text": text,
+                "embedding": embedding,
                 "created_at": created_at,
             },
         )
 
-    def search(self, query: str, size: int = 5):
+    def keyword_search(self, query: str, size: int = 5):
         self.ensure_index()
 
         response = self.client.search(
@@ -67,6 +75,24 @@ class ElasticsearchService:
             size=size,
         )
 
+        return self._format_hits(response)
+
+    def vector_search(self, query_embedding: list[float], size: int = 5):
+        self.ensure_index()
+
+        response = self.client.search(
+            index=self.INDEX_NAME,
+            knn={
+                "field": "embedding",
+                "query_vector": query_embedding,
+                "k": size,
+                "num_candidates": max(size * 10, 50),
+            },
+        )
+
+        return self._format_hits(response)
+
+    def _format_hits(self, response):
         return [
             {
                 "score": hit["_score"],

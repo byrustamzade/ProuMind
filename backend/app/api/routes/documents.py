@@ -16,6 +16,7 @@ from app.schemas.document import DocumentResponse
 from app.services.chunking_service import chunking_service
 from app.services.pdf_service import pdf_service
 from app.services.elasticsearch_service import elasticsearch_service
+from app.services.embedding_service import embedding_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger("uvicorn.error")
@@ -163,6 +164,8 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
         db.flush()
 
         for chunk in created_chunks:
+            embedding = embedding_service.embed_text(chunk.text)
+
             elasticsearch_service.index_chunk(
                 chunk_id=chunk.id,
                 document_id=document.id,
@@ -170,6 +173,7 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
                 source_type=document.source_type,
                 chunk_index=chunk.chunk_index,
                 text=chunk.text,
+                embedding=embedding,
                 created_at=chunk.created_at.isoformat(),
             )
 
@@ -219,10 +223,20 @@ def upload_pdf_alias(
 
 
 @router.get("/search")
-def search_documents(query: str, size: int = 5):
+def search_documents(query: str, size: int = 5, mode: str = "vector"):
+    if mode == "keyword":
+        results = elasticsearch_service.keyword_search(query=query, size=size)
+    else:
+        query_embedding = embedding_service.embed_text(query)
+        results = elasticsearch_service.vector_search(
+            query_embedding=query_embedding,
+            size=size,
+        )
+
     return {
         "query": query,
-        "results": elasticsearch_service.search(query=query, size=size),
+        "mode": mode,
+        "results": results,
     }
 
 
