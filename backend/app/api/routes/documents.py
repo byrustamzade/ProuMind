@@ -17,6 +17,7 @@ from app.services.chunking_service import chunking_service
 from app.services.pdf_service import pdf_service
 from app.services.elasticsearch_service import elasticsearch_service
 from app.services.embedding_service import embedding_service
+from app.services.retrieval_service import retrieval_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger("uvicorn.error")
@@ -223,15 +224,17 @@ def upload_pdf_alias(
 
 
 @router.get("/search")
-def search_documents(query: str, size: int = 5, mode: str = "vector"):
+def search_documents(query: str, size: int = 5, mode: str = "hybrid"):
     if mode == "keyword":
         results = elasticsearch_service.keyword_search(query=query, size=size)
-    else:
+    elif mode == "vector":
         query_embedding = embedding_service.embed_text(query)
         results = elasticsearch_service.vector_search(
             query_embedding=query_embedding,
             size=size,
         )
+    else:
+        results = retrieval_service.hybrid_search(query=query, size=size)
 
     return {
         "query": query,
