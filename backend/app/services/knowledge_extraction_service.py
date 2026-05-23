@@ -72,5 +72,29 @@ Text:
             "relationships": data.get("relationships", []),
         }
 
+    def extract_query_entities(self, question: str) -> list[str]:
+        prompt = f"""
+    Extract important entity names from this question.
+
+    Return ONLY valid JSON:
+    {{
+      "entities": ["Stripe Migration", "Payment API"]
+    }}
+
+    Question:
+    {question}
+    """.strip()
+
+        raw_response = llm_service.generate_raw(prompt)
+        data = self._parse_json(raw_response)
+
+        entities = data.get("entities", [])
+
+        return [
+            entity
+            for entity in entities
+            if isinstance(entity, str) and entity.strip()
+        ]
+
 
 knowledge_extraction_service = KnowledgeExtractionService()

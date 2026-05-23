@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException, status
 
 from app.schemas.ask import AskRequest, AskResponse, AskSource
+from app.services.knowledge_extraction_service import knowledge_extraction_service
 from app.services.llm_service import llm_service
+from app.services.neo4j_service import neo4j_service
 from app.services.retrieval_service import retrieval_service
 
 router = APIRouter(prefix="/ask", tags=["Ask AI"])
@@ -9,41 +11,40 @@ router = APIRouter(prefix="/ask", tags=["Ask AI"])
 
 @router.post("", response_model=AskResponse)
 def ask_question(payload: AskRequest):
-    if not payload.question.strip():
+    question = payload.question.strip()
+
+    if not question:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Question is required.",
         )
 
-    results = retrieval_service.hybrid_search(
-        query=payload.question,
+    retrieved_chunks = retrieval_service.hybrid_search(
+        query=question,
         size=payload.size,
     )
 
-    if not results:
+    query_entities = knowledge_extraction_service.extract_query_entities(question)
+
+    graph_context = neo4j_service.search_related_entities(
+        entity_names=query_entities,
+        limit=20,
+    )
+
+    if not retrieved_chunks and not graph_context:
         return AskResponse(
-            question=payload.question,
-            answer="I could not find relevant information in the indexed documents.",
+            question=question,
+            answer="I could not find relevant information in the indexed documents or knowledge graph.",
             sources=[],
         )
 
-    context_parts = []
-
-    for index, result in enumerate(results, start=1):
-        context_parts.append(
-            f"""
-Source {index}
-Document: {result.get("document_title")}
-Chunk ID: {result.get("chunk_id")}
-Text:
-{result.get("text")}
-""".strip()
-        )
-
-    context = "\n\n---\n\n".join(context_parts)
+    context = _build_context(
+        retrieved_chunks=retrieved_chunks,
+        graph_context=graph_context,
+    )
 
     answer = llm_service.generate_answer(
-        question=payload.question,
+        question=question,
         context=context,
     )
 
@@ -55,11 +56,62 @@ Text:
             score=result.get("hybrid_score"),
             text_preview=result["text"][:300],
         )
-        for result in results
+        for result in retrieved_chunks
     ]
 
     return AskResponse(
-        question=payload.question,
+        question=question,
         answer=answer,
         sources=sources,
     )
+
+
+def _build_context(retrieved_chunks: list[dict], graph_context: list[dict]) -> str:
+    parts = []
+
+    if retrieved_chunks:
+        chunk_parts = []
+
+        for index, result in enumerate(retrieved_chunks, start=1):
+            chunk_parts.append(
+                f"""
+Source {index}
+Document: {result.get("document_title")}
+Chunk ID: {result.get("chunk_id")}
+Text:
+{result.get("text")}
+""".strip()
+            )
+
+        parts.append(
+            "DOCUMENT CONTEXT:\n\n" + "\n\n---\n\n".join(chunk_parts)
+        )
+
+    if graph_context:
+        graph_lines = []
+
+        for item in graph_context:
+            entity = item.get("entity") or {}
+            related = item.get("related") or {}
+            relationship = item.get("relationship")
+
+            if not entity:
+                continue
+
+            if related and relationship:
+                graph_lines.append(
+                    f"{entity.get('type')}:{entity.get('name')} "
+                    f"-[{relationship}]- "
+                    f"{related.get('type')}:{related.get('name')}"
+                )
+            else:
+                graph_lines.append(
+                    f"{entity.get('type')}:{entity.get('name')}"
+                )
+
+        if graph_lines:
+            parts.append(
+                "KNOWLEDGE GRAPH CONTEXT:\n\n" + "\n".join(graph_lines)
+            )
+
+    return "\n\n====================\n\n".join(parts)

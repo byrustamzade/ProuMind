@@ -151,5 +151,39 @@ class Neo4jService:
         )
         return safe or "RELATED_TO"
 
+    def search_related_entities(self, entity_names: list[str], limit: int = 20):
+        if not entity_names:
+            return []
+
+        query = """
+        MATCH (e:Entity)
+        WHERE toLower(e.name) IN $entity_names
+        OPTIONAL MATCH (e)-[r]-(related:Entity)
+        RETURN e, r, related
+        LIMIT $limit
+        """
+
+        normalized_names = [name.lower() for name in entity_names]
+
+        with self.driver.session() as session:
+            result = session.run(
+                query,
+                entity_names=normalized_names,
+                limit=limit,
+            )
+
+            rows = []
+
+            for record in result:
+                rows.append(
+                    {
+                        "entity": dict(record["e"]) if record["e"] else None,
+                        "relationship": record["r"].type if record["r"] else None,
+                        "related": dict(record["related"]) if record["related"] else None,
+                    }
+                )
+
+            return rows
+
 
 neo4j_service = Neo4jService()
