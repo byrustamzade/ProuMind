@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 
-from app.schemas.ask import AskRequest, AskResponse, AskSource
+from app.schemas.ask import AskDebug, AskRequest, AskResponse, AskSource
 from app.services.knowledge_extraction_service import knowledge_extraction_service
 from app.services.llm_service import llm_service
 from app.services.neo4j_service import neo4j_service
@@ -54,15 +54,38 @@ def ask_question(payload: AskRequest):
             document_id=result["document_id"],
             document_title=result["document_title"],
             score=result.get("hybrid_score"),
+            keyword_score=result.get("keyword_score"),
+            vector_score=result.get("vector_score"),
             text_preview=result["text"][:300],
         )
         for result in retrieved_chunks
     ]
 
+    debug = None
+
+    if payload.debug:
+        debug = AskDebug(
+            query_entities=query_entities,
+            graph_context=graph_context,
+            retrieved_chunks=[
+                {
+                    "chunk_id": result.get("chunk_id"),
+                    "document_id": result.get("document_id"),
+                    "document_title": result.get("document_title"),
+                    "hybrid_score": result.get("hybrid_score"),
+                    "keyword_score": result.get("keyword_score"),
+                    "vector_score": result.get("vector_score"),
+                    "chunk_index": result.get("chunk_index"),
+                }
+                for result in retrieved_chunks
+            ],
+        )
+
     return AskResponse(
         question=question,
         answer=answer,
         sources=sources,
+        debug=debug,
     )
 
 
