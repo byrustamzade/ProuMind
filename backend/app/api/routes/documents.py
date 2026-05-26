@@ -218,7 +218,7 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
                 to_name=to_name,
                 to_type=to_type,
             )
-            
+
         db.commit()
         logger.info(
             "Upload persisted: filename=%s chunks=%s total_elapsed=%.2fs",
@@ -265,21 +265,42 @@ def upload_pdf_alias(
 
 
 @router.get("/search")
-def search_documents(query: str, size: int = 5, mode: str = "hybrid"):
+def search_documents(
+        query: str,
+        size: int = 5,
+        mode: str = "hybrid",
+        document_id: int | None = None,
+        source_type: str | None = None,
+):
+    filters = {
+        "document_id": document_id,
+        "source_type": source_type,
+    }
+
     if mode == "keyword":
-        results = elasticsearch_service.keyword_search(query=query, size=size)
+        results = elasticsearch_service.keyword_search(
+            query=query,
+            size=size,
+            filters=filters,
+        )
     elif mode == "vector":
         query_embedding = embedding_service.embed_text(query)
         results = elasticsearch_service.vector_search(
             query_embedding=query_embedding,
             size=size,
+            filters=filters,
         )
     else:
-        results = retrieval_service.hybrid_search(query=query, size=size)
+        results = retrieval_service.hybrid_search(
+            query=query,
+            size=size,
+            filters=filters,
+        )
 
     return {
         "query": query,
         "mode": mode,
+        "filters": filters,
         "results": results,
     }
 

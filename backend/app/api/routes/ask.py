@@ -19,9 +19,12 @@ def ask_question(payload: AskRequest):
             detail="Question is required.",
         )
 
+    filters = payload.filters.model_dump(exclude_none=True) if payload.filters else None
+
     retrieved_chunks = retrieval_service.hybrid_search(
         query=question,
         size=payload.size,
+        filters=filters,
     )
 
     query_entities = knowledge_extraction_service.extract_query_entities(question)

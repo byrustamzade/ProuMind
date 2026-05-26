@@ -35,15 +35,15 @@ class ElasticsearchService:
         )
 
     def index_chunk(
-        self,
-        chunk_id: int,
-        document_id: int,
-        document_title: str,
-        source_type: str,
-        chunk_index: int,
-        text: str,
-        embedding: list[float],
-        created_at: str,
+            self,
+            chunk_id: int,
+            document_id: int,
+            document_title: str,
+            source_type: str,
+            chunk_index: int,
+            text: str,
+            embedding: list[float],
+            created_at: str,
     ):
         self.ensure_index()
 
@@ -62,32 +62,52 @@ class ElasticsearchService:
             },
         )
 
-    def keyword_search(self, query: str, size: int = 5):
+    def keyword_search(self, query: str, size: int = 5, filters: dict | None = None):
         self.ensure_index()
+
+        es_query = {
+            "bool": {
+                "must": [
+                    {
+                        "match": {
+                            "text": query,
+                        }
+                    }
+                ],
+                "filter": self._build_filters(filters),
+            }
+        }
 
         response = self.client.search(
             index=self.INDEX_NAME,
-            query={
-                "match": {
-                    "text": query,
-                }
-            },
+            query=es_query,
             size=size,
         )
 
         return self._format_hits(response)
 
-    def vector_search(self, query_embedding: list[float], size: int = 5):
+    def vector_search(
+            self,
+            query_embedding: list[float],
+            size: int = 5,
+            filters: dict | None = None,
+    ):
         self.ensure_index()
+
+        knn = {
+            "field": "embedding",
+            "query_vector": query_embedding,
+            "k": size,
+            "num_candidates": max(size * 10, 50),
+        }
+
+        es_filters = self._build_filters(filters)
+        if es_filters:
+            knn["filter"] = es_filters
 
         response = self.client.search(
             index=self.INDEX_NAME,
-            knn={
-                "field": "embedding",
-                "query_vector": query_embedding,
-                "k": size,
-                "num_candidates": max(size * 10, 50),
-            },
+            knn=knn,
         )
 
         return self._format_hits(response)
@@ -100,6 +120,34 @@ class ElasticsearchService:
             }
             for hit in response["hits"]["hits"]
         ]
+
+    def _build_filters(self, filters: dict | None = None) -> list[dict]:
+        if not filters:
+            return []
+
+        es_filters = []
+
+        document_id = filters.get("document_id")
+        if document_id:
+            es_filters.append(
+                {
+                    "term": {
+                        "document_id": document_id,
+                    }
+                }
+            )
+
+        source_type = filters.get("source_type")
+        if source_type:
+            es_filters.append(
+                {
+                    "term": {
+                        "source_type": source_type,
+                    }
+                }
+            )
+
+        return es_filters
 
 
 elasticsearch_service = ElasticsearchService()

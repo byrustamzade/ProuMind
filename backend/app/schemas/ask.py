@@ -1,10 +1,14 @@
 from pydantic import BaseModel
 
+class AskFilters(BaseModel):
+    document_id: int | None = None
+    source_type: str | None = None
 
 class AskRequest(BaseModel):
     question: str
     size: int = 5
     debug: bool = False
+    filters: AskFilters | None = None
 
 
 class AskSource(BaseModel):

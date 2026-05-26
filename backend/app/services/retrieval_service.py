@@ -11,6 +11,7 @@ class RetrievalService:
             keyword_weight: float = 0.4,
             vector_weight: float = 0.6,
             rerank: bool = True,
+            filters: dict | None = None,
     ):
         query_embedding = embedding_service.embed_text(query)
 
@@ -19,11 +20,13 @@ class RetrievalService:
         keyword_results = elasticsearch_service.keyword_search(
             query=query,
             size=candidate_size,
+            filters=filters,
         )
 
         vector_results = elasticsearch_service.vector_search(
             query_embedding=query_embedding,
             size=candidate_size,
+            filters=filters,
         )
 
         merged = {}
