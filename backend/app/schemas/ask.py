@@ -15,6 +15,7 @@ class AskSource(BaseModel):
     keyword_score: float | None = None
     vector_score: float | None = None
     text_preview: str
+    rerank_score: float | None = None
 
 
 class AskDebug(BaseModel):

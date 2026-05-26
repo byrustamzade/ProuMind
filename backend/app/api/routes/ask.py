@@ -57,6 +57,7 @@ def ask_question(payload: AskRequest):
             keyword_score=result.get("keyword_score"),
             vector_score=result.get("vector_score"),
             text_preview=result["text"][:300],
+            rerank_score=result.get("rerank_score"),
         )
         for result in retrieved_chunks
     ]
@@ -76,6 +77,7 @@ def ask_question(payload: AskRequest):
                     "keyword_score": result.get("keyword_score"),
                     "vector_score": result.get("vector_score"),
                     "chunk_index": result.get("chunk_index"),
+                    "rerank_score": result.get("rerank_score"),
                 }
                 for result in retrieved_chunks
             ],

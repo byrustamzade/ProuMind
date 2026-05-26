@@ -1,25 +1,29 @@
 from app.services.elasticsearch_service import elasticsearch_service
 from app.services.embedding_service import embedding_service
+from app.services.reranking_service import reranking_service
 
 
 class RetrievalService:
     def hybrid_search(
-        self,
-        query: str,
-        size: int = 5,
-        keyword_weight: float = 0.4,
-        vector_weight: float = 0.6,
+            self,
+            query: str,
+            size: int = 5,
+            keyword_weight: float = 0.4,
+            vector_weight: float = 0.6,
+            rerank: bool = True,
     ):
         query_embedding = embedding_service.embed_text(query)
 
+        candidate_size = max(size * 5, 20)
+
         keyword_results = elasticsearch_service.keyword_search(
             query=query,
-            size=size * 2,
+            size=candidate_size,
         )
 
         vector_results = elasticsearch_service.vector_search(
             query_embedding=query_embedding,
-            size=size * 2,
+            size=candidate_size,
         )
 
         merged = {}
@@ -41,6 +45,13 @@ class RetrievalService:
             key=lambda item: item["hybrid_score"],
             reverse=True,
         )
+
+        if rerank:
+            return reranking_service.rerank(
+                query=query,
+                results=results,
+                size=size,
+            )
 
         return results[:size]
 
