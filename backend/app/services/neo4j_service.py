@@ -70,10 +70,10 @@ class Neo4jService:
         return key
 
     def link_document_to_entity(
-        self,
-        document_id: int,
-        entity_name: str,
-        entity_type: str,
+            self,
+            document_id: int,
+            entity_name: str,
+            entity_type: str,
     ):
         entity_key = self.upsert_entity(entity_name, entity_type)
 
@@ -91,12 +91,12 @@ class Neo4jService:
             )
 
     def create_entity_relationship(
-        self,
-        from_name: str,
-        from_type: str,
-        relation: str,
-        to_name: str,
-        to_type: str,
+            self,
+            from_name: str,
+            from_type: str,
+            relation: str,
+            to_name: str,
+            to_type: str,
     ):
         from_key = self.upsert_entity(from_name, from_type)
         to_key = self.upsert_entity(to_name, to_type)
@@ -184,6 +184,62 @@ class Neo4jService:
                 )
 
             return rows
+
+    def search_multi_hop_context(
+            self,
+            entity_names: list[str],
+            max_depth: int = 2,
+            limit: int = 30,
+    ):
+        if not entity_names:
+            return []
+
+        normalized_names = [name.lower() for name in entity_names]
+
+        query = f"""
+            MATCH path = (start:Entity)-[*1..{max_depth}]-(related:Entity)
+            WHERE toLower(start.name) IN $entity_names
+            RETURN path
+            LIMIT $limit
+            """
+
+        with self.driver.session() as session:
+            result = session.run(
+                query,
+                entity_names=normalized_names,
+                limit=limit,
+            )
+
+            paths = []
+
+            for record in result:
+                path = record["path"]
+
+                nodes = [
+                    {
+                        "name": node.get("name"),
+                        "type": node.get("type"),
+                        "key": node.get("key"),
+                    }
+                    for node in path.nodes
+                ]
+
+                relationships = [
+                    {
+                        "type": relationship.type,
+                        "label": relationship.get("label"),
+                    }
+                    for relationship in path.relationships
+                ]
+
+                paths.append(
+                    {
+                        "nodes": nodes,
+                        "relationships": relationships,
+                    }
+                )
+
+            return paths
 
 
 neo4j_service = Neo4jService()

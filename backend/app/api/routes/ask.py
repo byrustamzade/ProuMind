@@ -40,6 +40,12 @@ def ask_question(payload: AskRequest):
         limit=20,
     )
 
+    graph_paths = neo4j_service.search_multi_hop_context(
+        entity_names=query_entities,
+        max_depth=2,
+        limit=30,
+    )
+
     if not retrieved_chunks and not graph_context:
         return AskResponse(
             question=question,
@@ -50,6 +56,7 @@ def ask_question(payload: AskRequest):
     context = context_service.build_context(
         retrieved_chunks=retrieved_chunks,
         graph_context=graph_context,
+        graph_paths=graph_paths,
     )
 
     answer = llm_service.generate_answer(
@@ -76,7 +83,10 @@ def ask_question(payload: AskRequest):
     if payload.debug:
         debug = AskDebug(
             query_entities=query_entities,
-            graph_context=graph_context,
+            graph_context={
+                "direct_relations": graph_context,
+                "multi_hop_paths": graph_paths,
+            },
             retrieved_chunks=[
                 {
                     "chunk_id": result.get("chunk_id"),

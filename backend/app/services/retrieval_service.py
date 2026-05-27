@@ -15,7 +15,7 @@ class RetrievalService:
     ):
         query_embedding = embedding_service.embed_text(query)
 
-        candidate_size = max(size * 5, 20)
+        candidate_size = max(size * 10, 50)
 
         keyword_results = elasticsearch_service.keyword_search(
             query=query,
