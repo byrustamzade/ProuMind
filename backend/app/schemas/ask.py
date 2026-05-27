@@ -26,6 +26,7 @@ class AskSource(BaseModel):
 
 class AskDebug(BaseModel):
     query_entities: list[str]
+    expansion_terms: list[str]
     graph_context: dict
     retrieved_chunks: list[dict]
 

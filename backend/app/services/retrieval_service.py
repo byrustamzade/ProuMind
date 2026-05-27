@@ -58,5 +58,24 @@ class RetrievalService:
 
         return results[:size]
 
+    def graph_expanded_search(
+            self,
+            query: str,
+            expansion_terms: list[str],
+            size: int = 5,
+            filters: dict | None = None,
+    ):
+        expanded_query = query
+
+        if expansion_terms:
+            expanded_query = query + " " + " ".join(expansion_terms)
+
+        return self.hybrid_search(
+            query=expanded_query,
+            size=size,
+            filters=filters,
+            rerank=True,
+        )
+
 
 retrieval_service = RetrievalService()

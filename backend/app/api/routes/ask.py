@@ -20,19 +20,6 @@ def ask_question(payload: AskRequest):
             detail="Question is required.",
         )
 
-    filters = payload.filters.model_dump(exclude_none=True) if payload.filters else None
-
-    retrieved_chunks = retrieval_service.hybrid_search(
-        query=question,
-        size=payload.size,
-        filters=filters,
-    )
-
-    retrieved_chunks = context_service.prepare_chunks(
-        chunks=retrieved_chunks,
-        max_chunks=payload.size,
-    )
-
     query_entities = knowledge_extraction_service.extract_query_entities(question)
 
     graph_context = neo4j_service.search_related_entities(
@@ -44,6 +31,39 @@ def ask_question(payload: AskRequest):
         entity_names=query_entities,
         max_depth=2,
         limit=30,
+    )
+
+    expansion_terms = []
+
+    for item in graph_context:
+        entity = item.get("entity") or {}
+        related = item.get("related") or {}
+
+        if entity.get("name"):
+            expansion_terms.append(entity["name"])
+
+        if related.get("name"):
+            expansion_terms.append(related["name"])
+
+    for path in graph_paths:
+        for node in path.get("nodes", []):
+            if node.get("name"):
+                expansion_terms.append(node["name"])
+
+    expansion_terms = list(dict.fromkeys(expansion_terms))
+
+    filters = payload.filters.model_dump(exclude_none=True) if payload.filters else None
+
+    retrieved_chunks = retrieval_service.graph_expanded_search(
+        query=question,
+        expansion_terms=expansion_terms,
+        size=payload.size,
+        filters=filters,
+    )
+
+    retrieved_chunks = context_service.prepare_chunks(
+        chunks=retrieved_chunks,
+        max_chunks=payload.size,
     )
 
     if not retrieved_chunks and not graph_context:
@@ -100,6 +120,7 @@ def ask_question(payload: AskRequest):
                 }
                 for result in retrieved_chunks
             ],
+            expansion_terms=expansion_terms,
         )
 
     return AskResponse(
