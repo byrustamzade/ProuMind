@@ -5,6 +5,7 @@ from app.services.knowledge_extraction_service import knowledge_extraction_servi
 from app.services.llm_service import llm_service
 from app.services.neo4j_service import neo4j_service
 from app.services.retrieval_service import retrieval_service
+from app.services.context_service import context_service
 
 router = APIRouter(prefix="/ask", tags=["Ask AI"])
 
@@ -27,6 +28,11 @@ def ask_question(payload: AskRequest):
         filters=filters,
     )
 
+    retrieved_chunks = context_service.prepare_chunks(
+        chunks=retrieved_chunks,
+        max_chunks=payload.size,
+    )
+
     query_entities = knowledge_extraction_service.extract_query_entities(question)
 
     graph_context = neo4j_service.search_related_entities(
@@ -41,7 +47,7 @@ def ask_question(payload: AskRequest):
             sources=[],
         )
 
-    context = _build_context(
+    context = context_service.build_context(
         retrieved_chunks=retrieved_chunks,
         graph_context=graph_context,
     )
