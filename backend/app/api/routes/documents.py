@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.models.ingestion_job import IngestionJob
 from app.models.source import Source  # noqa: F401
 from app.schemas.document import DocumentResponse
 from app.services.chunking_service import chunking_service
@@ -47,10 +48,10 @@ def _sanitize_filename(filename: str) -> str:
 
 def _build_document_response(document: Document, db: Session) -> DocumentResponse:
     chunks_count = (
-                       db.query(func.count(Chunk.id))
-                       .filter(Chunk.document_id == document.id)
-                       .scalar()
-                   ) or 0
+        db.query(func.count(Chunk.id))
+        .filter(Chunk.document_id == document.id)
+        .scalar()
+    ) or 0
 
     return DocumentResponse(
         id=document.id,
@@ -62,9 +63,14 @@ def _build_document_response(document: Document, db: Session) -> DocumentRespons
     )
 
 
-def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None) -> DocumentResponse:
+def _ingest_pdf(
+    file: UploadFile,
+    db: Session,
+    response: Response | None = None,
+) -> DocumentResponse:
     started_at = time.perf_counter()
     filename = (file.filename or "").strip()
+
     if not filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,6 +85,7 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
 
     file_bytes = file.file.read()
     logger.info("Upload received: filename=%s bytes=%s", filename, len(file_bytes))
+
     if not file_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -92,51 +99,28 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
         )
 
     content_hash = hashlib.sha256(file_bytes).hexdigest()
+
     existing_document = (
         db.query(Document)
         .filter(Document.content_hash == content_hash)
         .first()
     )
+
     if existing_document:
-        logger.info("Duplicate upload detected: filename=%s hash=%s", filename, content_hash[:12])
+        logger.info(
+            "Duplicate upload detected: filename=%s hash=%s",
+            filename,
+            content_hash[:12],
+        )
+
         if response is not None:
             response.status_code = status.HTTP_200_OK
+
         return _build_document_response(existing_document, db)
 
     safe_filename = _sanitize_filename(filename)
     file_path = STORAGE_DIR / f"{content_hash[:12]}_{safe_filename}"
     file_path.write_bytes(file_bytes)
-
-    try:
-        raw_text = pdf_service.extract_text(str(file_path)).strip()
-        logger.info(
-            "Text extracted: filename=%s chars=%s elapsed=%.2fs",
-            filename,
-            len(raw_text),
-            time.perf_counter() - started_at,
-        )
-    except Exception as error:
-        file_path.unlink(missing_ok=True)
-        logger.exception("Text extraction failed: filename=%s", filename)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to extract text from the PDF: {error}",
-        )
-
-    if not raw_text:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not extract readable text from the PDF.",
-        )
-
-    chunks = chunking_service.split_text(raw_text)
-    if not chunks:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Text was extracted, but no usable chunks were produced.",
-        )
 
     document = Document(
         title=filename,
@@ -144,13 +128,48 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
         file_name=filename,
         file_path=str(file_path),
         content_hash=content_hash,
-        raw_text=raw_text,
-        status="processed",
+        raw_text=None,
+        status="processing",
     )
 
     try:
         db.add(document)
         db.flush()
+
+        ingestion_job = IngestionJob(
+            document_id=document.id,
+            status="processing",
+            started_at=func.now(),
+        )
+
+        db.add(ingestion_job)
+        db.flush()
+
+        raw_text = pdf_service.extract_text(str(file_path)).strip()
+
+        logger.info(
+            "Text extracted: filename=%s chars=%s elapsed=%.2fs",
+            filename,
+            len(raw_text),
+            time.perf_counter() - started_at,
+        )
+
+        if not raw_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not extract readable text from the PDF.",
+            )
+
+        chunks = chunking_service.split_text(raw_text)
+
+        if not chunks:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Text was extracted, but no usable chunks were produced.",
+            )
+
+        document.raw_text = raw_text
+        document.status = "processed"
 
         created_chunks = [
             Chunk(
@@ -219,23 +238,36 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
                 to_type=to_type,
             )
 
+        ingestion_job.status = "completed"
+        ingestion_job.finished_at = func.now()
+
         db.commit()
+
         logger.info(
             "Upload persisted: filename=%s chunks=%s total_elapsed=%.2fs",
             filename,
             len(chunks),
             time.perf_counter() - started_at,
         )
+
+    except HTTPException:
+        db.rollback()
+        file_path.unlink(missing_ok=True)
+        raise
+
     except Exception as error:
         db.rollback()
         file_path.unlink(missing_ok=True)
-        logger.exception("Failed to save document metadata: filename=%s", filename)
+
+        logger.exception("Failed to ingest document: filename=%s", filename)
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save document metadata: {error}",
+            detail=f"Failed to ingest document: {error}",
         )
 
     db.refresh(document)
+
     return DocumentResponse(
         id=document.id,
         title=document.title,
@@ -248,29 +280,29 @@ def _ingest_pdf(file: UploadFile, db: Session, response: Response | None = None)
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 def upload_pdf(
-        response: Response,
-        file: UploadFile = File(...),
-        db: Session = Depends(get_db),
+    response: Response,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
 ):
     return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.post("", response_model=DocumentResponse, include_in_schema=False)
 def upload_pdf_alias(
-        response: Response,
-        file: UploadFile = File(...),
-        db: Session = Depends(get_db),
+    response: Response,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
 ):
     return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.get("/search")
 def search_documents(
-        query: str,
-        size: int = 5,
-        mode: str = "hybrid",
-        document_id: int | None = None,
-        source_type: str | None = None,
+    query: str,
+    size: int = 5,
+    mode: str = "hybrid",
+    document_id: int | None = None,
+    source_type: str | None = None,
 ):
     filters = {
         "document_id": document_id,
@@ -303,6 +335,29 @@ def search_documents(
         "filters": filters,
         "results": results,
     }
+
+
+@router.get("/ingestion-jobs")
+def list_ingestion_jobs(db: Session = Depends(get_db)):
+    jobs = (
+        db.query(IngestionJob)
+        .order_by(IngestionJob.id.desc())
+        .limit(50)
+        .all()
+    )
+
+    return [
+        {
+            "id": job.id,
+            "document_id": job.document_id,
+            "status": job.status,
+            "error_message": job.error_message,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+            "created_at": job.created_at,
+        }
+        for job in jobs
+    ]
 
 
 @router.get("", response_model=list[DocumentResponse])
