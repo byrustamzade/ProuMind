@@ -7,20 +7,20 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from redis import Redis
+from rq import Queue
 
+from app.core.config import settings
+from app.workers.document_worker import process_document_job
 from app.db.session import SessionLocal
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.ingestion_job import IngestionJob
 from app.models.source import Source  # noqa: F401
 from app.schemas.document import DocumentResponse
-from app.services.chunking_service import chunking_service
-from app.services.pdf_service import pdf_service
 from app.services.elasticsearch_service import elasticsearch_service
 from app.services.embedding_service import embedding_service
 from app.services.retrieval_service import retrieval_service
-from app.services.knowledge_extraction_service import knowledge_extraction_service
-from app.services.neo4j_service import neo4j_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 logger = logging.getLogger("uvicorn.error")
@@ -28,6 +28,9 @@ logger = logging.getLogger("uvicorn.error")
 STORAGE_DIR = Path("storage/documents")
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 MAX_PDF_SIZE_BYTES = 20 * 1024 * 1024
+
+redis_connection = Redis.from_url(settings.redis_url)
+ingestion_queue = Queue("proumind_ingestion", connection=redis_connection)
 
 
 def get_db():
@@ -48,10 +51,10 @@ def _sanitize_filename(filename: str) -> str:
 
 def _build_document_response(document: Document, db: Session) -> DocumentResponse:
     chunks_count = (
-        db.query(func.count(Chunk.id))
-        .filter(Chunk.document_id == document.id)
-        .scalar()
-    ) or 0
+                       db.query(func.count(Chunk.id))
+                       .filter(Chunk.document_id == document.id)
+                       .scalar()
+                   ) or 0
 
     return DocumentResponse(
         id=document.id,
@@ -64,9 +67,9 @@ def _build_document_response(document: Document, db: Session) -> DocumentRespons
 
 
 def _ingest_pdf(
-    file: UploadFile,
-    db: Session,
-    response: Response | None = None,
+        file: UploadFile,
+        db: Session,
+        response: Response | None = None,
 ) -> DocumentResponse:
     started_at = time.perf_counter()
     filename = (file.filename or "").strip()
@@ -129,7 +132,7 @@ def _ingest_pdf(
         file_path=str(file_path),
         content_hash=content_hash,
         raw_text=None,
-        status="processing",
+        status="pending",
     )
 
     try:
@@ -138,171 +141,65 @@ def _ingest_pdf(
 
         ingestion_job = IngestionJob(
             document_id=document.id,
-            status="processing",
-            started_at=func.now(),
+            status="pending",
         )
 
         db.add(ingestion_job)
-        db.flush()
-
-        raw_text = pdf_service.extract_text(str(file_path)).strip()
-
-        logger.info(
-            "Text extracted: filename=%s chars=%s elapsed=%.2fs",
-            filename,
-            len(raw_text),
-            time.perf_counter() - started_at,
-        )
-
-        if not raw_text:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not extract readable text from the PDF.",
-            )
-
-        chunks = chunking_service.split_text(raw_text)
-
-        if not chunks:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Text was extracted, but no usable chunks were produced.",
-            )
-
-        document.raw_text = raw_text
-        document.status = "processed"
-
-        created_chunks = [
-            Chunk(
-                document_id=document.id,
-                chunk_index=index,
-                text=chunk_text,
-                token_count=None,
-                page_number=None,
-            )
-            for index, chunk_text in enumerate(chunks)
-        ]
-
-        db.add_all(created_chunks)
-        db.flush()
-
-        for chunk in created_chunks:
-            embedding = embedding_service.embed_text(chunk.text)
-
-            elasticsearch_service.index_chunk(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_title=document.title,
-                source_type=document.source_type,
-                chunk_index=chunk.chunk_index,
-                text=chunk.text,
-                embedding=embedding,
-                created_at=chunk.created_at.isoformat(),
-            )
-
-        neo4j_service.upsert_document(
-            document_id=document.id,
-            title=document.title,
-            source_type=document.source_type,
-        )
-
-        knowledge_graph = knowledge_extraction_service.extract(raw_text)
-
-        for entity in knowledge_graph.get("entities", []):
-            name = entity.get("name")
-            entity_type = entity.get("type", "Other")
-
-            if not name:
-                continue
-
-            neo4j_service.link_document_to_entity(
-                document_id=document.id,
-                entity_name=name,
-                entity_type=entity_type,
-            )
-
-        for relationship in knowledge_graph.get("relationships", []):
-            from_name = relationship.get("from")
-            from_type = relationship.get("from_type", "Other")
-            relation = relationship.get("relation", "RELATED_TO")
-            to_name = relationship.get("to")
-            to_type = relationship.get("to_type", "Other")
-
-            if not from_name or not to_name:
-                continue
-
-            neo4j_service.create_entity_relationship(
-                from_name=from_name,
-                from_type=from_type,
-                relation=relation,
-                to_name=to_name,
-                to_type=to_type,
-            )
-
-        ingestion_job.status = "completed"
-        ingestion_job.finished_at = func.now()
-
         db.commit()
+        db.refresh(document)
 
-        logger.info(
-            "Upload persisted: filename=%s chunks=%s total_elapsed=%.2fs",
-            filename,
-            len(chunks),
-            time.perf_counter() - started_at,
+        ingestion_queue.enqueue(
+            process_document_job,
+            document.id,
+            job_timeout=900,
         )
 
-    except HTTPException:
-        db.rollback()
-        file_path.unlink(missing_ok=True)
-        raise
+        logger.info(
+            "Document queued for ingestion: id=%s filename=%s elapsed=%.2fs",
+            document.id,
+            filename,
+            time.perf_counter() - started_at,
+        )
 
     except Exception as error:
         db.rollback()
         file_path.unlink(missing_ok=True)
 
-        logger.exception("Failed to ingest document: filename=%s", filename)
+        logger.exception("Failed to queue document ingestion: filename=%s", filename)
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to ingest document: {error}",
+            detail=f"Failed to queue document ingestion: {error}",
         )
 
-    db.refresh(document)
-
-    return DocumentResponse(
-        id=document.id,
-        title=document.title,
-        source_type=document.source_type,
-        status=document.status,
-        chunks_count=len(chunks),
-        created_at=document.created_at,
-    )
+    return _build_document_response(document, db)
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 def upload_pdf(
-    response: Response,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+        response: Response,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
 ):
     return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.post("", response_model=DocumentResponse, include_in_schema=False)
 def upload_pdf_alias(
-    response: Response,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+        response: Response,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
 ):
     return _ingest_pdf(file=file, db=db, response=response)
 
 
 @router.get("/search")
 def search_documents(
-    query: str,
-    size: int = 5,
-    mode: str = "hybrid",
-    document_id: int | None = None,
-    source_type: str | None = None,
+        query: str,
+        size: int = 5,
+        mode: str = "hybrid",
+        document_id: int | None = None,
+        source_type: str | None = None,
 ):
     filters = {
         "document_id": document_id,
