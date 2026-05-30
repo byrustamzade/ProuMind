@@ -257,6 +257,63 @@ def list_ingestion_jobs(db: Session = Depends(get_db)):
     ]
 
 
+@router.post("/ingestion-jobs/{job_id}/retry")
+def retry_ingestion_job(
+        job_id: int,
+        db: Session = Depends(get_db),
+):
+    ingestion_job = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.id == job_id)
+        .first()
+    )
+
+    if not ingestion_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingestion job not found.",
+        )
+
+    if ingestion_job.status != "failed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only failed ingestion jobs can be retried.",
+        )
+
+    document = (
+        db.query(Document)
+        .filter(Document.id == ingestion_job.document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Related document not found.",
+        )
+
+    document.status = "pending"
+    ingestion_job.status = "pending"
+    ingestion_job.error_message = None
+    ingestion_job.started_at = None
+    ingestion_job.finished_at = None
+
+    db.commit()
+
+    ingestion_queue.enqueue(
+        process_document_job,
+        document.id,
+        job_timeout=900,
+    )
+
+    return {
+        "message": "Ingestion job queued for retry.",
+        "job_id": ingestion_job.id,
+        "document_id": document.id,
+        "status": ingestion_job.status,
+    }
+
+
 @router.get("", response_model=list[DocumentResponse])
 def list_documents(db: Session = Depends(get_db)):
     rows = (
