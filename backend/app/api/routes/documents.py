@@ -314,6 +314,82 @@ def retry_ingestion_job(
     }
 
 
+@router.get("/ingestion-jobs/{job_id}")
+def get_ingestion_job(
+        job_id: int,
+        db: Session = Depends(get_db),
+):
+    ingestion_job = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.id == job_id)
+        .first()
+    )
+
+    if not ingestion_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingestion job not found.",
+        )
+
+    document = (
+        db.query(Document)
+        .filter(Document.id == ingestion_job.document_id)
+        .first()
+    )
+
+    return {
+        "id": ingestion_job.id,
+        "document_id": ingestion_job.document_id,
+        "document_title": document.title if document else None,
+        "document_status": document.status if document else None,
+        "status": ingestion_job.status,
+        "error_message": ingestion_job.error_message,
+        "started_at": ingestion_job.started_at,
+        "finished_at": ingestion_job.finished_at,
+        "created_at": ingestion_job.created_at,
+    }
+
+@router.post("/{document_id}/reprocess")
+def reprocess_document(
+        document_id: int,
+        db: Session = Depends(get_db),
+):
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    document.status = "pending"
+
+    ingestion_job = IngestionJob(
+        document_id=document.id,
+        status="pending",
+    )
+
+    db.add(ingestion_job)
+    db.commit()
+
+    ingestion_queue.enqueue(
+        process_document_job,
+        document.id,
+        job_timeout=900,
+    )
+
+    return {
+        "message": "Document queued for reprocessing.",
+        "document_id": document.id,
+        "job_id": ingestion_job.id,
+        "status": ingestion_job.status,
+    }
+
+
 @router.get("", response_model=list[DocumentResponse])
 def list_documents(db: Session = Depends(get_db)):
     rows = (
