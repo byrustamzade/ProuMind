@@ -14,6 +14,7 @@ from app.services.embedding_service import embedding_service
 from app.services.knowledge_extraction_service import knowledge_extraction_service
 from app.services.neo4j_service import neo4j_service
 from app.services.pdf_service import pdf_service
+from app.services.web_page_service import web_page_service
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -48,7 +49,11 @@ class IngestionService:
             ingestion_job.started_at = func.now()
             db.commit()
 
-            raw_text = pdf_service.extract_text(document.file_path).strip()
+            if document.source_type == "url":
+                _, raw_text = web_page_service.fetch_text(document.file_path)
+                raw_text = raw_text.strip()
+            else:
+                raw_text = pdf_service.extract_text(document.file_path).strip()
 
             if not raw_text:
                 raise ValueError("Could not extract readable text from the PDF.")

@@ -26,3 +26,4 @@ pillow
 openai
 httpx
 rq
+beautifulsoup4

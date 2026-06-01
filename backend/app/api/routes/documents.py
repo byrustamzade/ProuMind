@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from pydantic import BaseModel, HttpUrl
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from redis import Redis
@@ -31,6 +32,10 @@ MAX_PDF_SIZE_BYTES = 20 * 1024 * 1024
 
 redis_connection = Redis.from_url(settings.redis_url)
 ingestion_queue = Queue("proumind_ingestion", connection=redis_connection)
+
+
+class UrlIngestionRequest(BaseModel):
+    url: HttpUrl
 
 
 def get_db():
@@ -193,6 +198,72 @@ def upload_pdf_alias(
     return _ingest_pdf(file=file, db=db, response=response)
 
 
+@router.post("/url", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+def ingest_url(
+        payload: UrlIngestionRequest,
+        db: Session = Depends(get_db),
+):
+    url = str(payload.url)
+
+    content_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+    existing_document = (
+        db.query(Document)
+        .filter(Document.content_hash == content_hash)
+        .first()
+    )
+
+    if existing_document:
+        return _build_document_response(existing_document, db)
+
+    document = Document(
+        title=url,
+        source_type="url",
+        file_name=None,
+        file_path=url,
+        content_hash=content_hash,
+        raw_text=None,
+        status="pending",
+    )
+
+    try:
+        db.add(document)
+        db.flush()
+
+        ingestion_job = IngestionJob(
+            document_id=document.id,
+            status="pending",
+        )
+
+        db.add(ingestion_job)
+        db.commit()
+        db.refresh(document)
+
+        ingestion_queue.enqueue(
+            process_document_job,
+            document.id,
+            job_timeout=900,
+        )
+
+        logger.info(
+            "URL queued for ingestion: id=%s url=%s",
+            document.id,
+            url,
+        )
+
+    except Exception as error:
+        db.rollback()
+
+        logger.exception("Failed to queue URL ingestion: url=%s", url)
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue URL ingestion: {error}",
+        )
+
+    return _build_document_response(document, db)
+
+
 @router.get("/search")
 def search_documents(
         query: str,
@@ -348,6 +419,7 @@ def get_ingestion_job(
         "finished_at": ingestion_job.finished_at,
         "created_at": ingestion_job.created_at,
     }
+
 
 @router.post("/{document_id}/reprocess")
 def reprocess_document(
