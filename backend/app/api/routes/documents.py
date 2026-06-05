@@ -45,6 +45,12 @@ class GitHubIssuesIngestionRequest(BaseModel):
     limit: int = 20
 
 
+class GitHubPullsIngestionRequest(BaseModel):
+    repo_url: HttpUrl
+    state: str = "open"
+    limit: int = 20
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -373,6 +379,86 @@ def ingest_github_issues(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to queue GitHub issues ingestion: {error}",
+        )
+
+    return _build_document_response(document, db)
+
+
+@router.post("/github/pulls", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+def ingest_github_pulls(
+        payload: GitHubPullsIngestionRequest,
+        db: Session = Depends(get_db),
+):
+    repo_url = str(payload.repo_url)
+    state = payload.state.lower().strip()
+
+    if state not in {"open", "closed", "all"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State must be one of: open, closed, all.",
+        )
+
+    limit = max(1, min(payload.limit, 100))
+
+    content_hash = hashlib.sha256(
+        f"github_pulls:{repo_url}:{state}:{limit}".encode("utf-8")
+    ).hexdigest()
+
+    existing_document = (
+        db.query(Document)
+        .filter(Document.content_hash == content_hash)
+        .first()
+    )
+
+    if existing_document:
+        return _build_document_response(existing_document, db)
+
+    document = Document(
+        title=f"GitHub Pull Requests: {repo_url}",
+        source_type="github_pulls",
+        file_name=None,
+        file_path=repo_url,
+        content_hash=content_hash,
+        raw_text=None,
+        status="pending",
+    )
+
+    try:
+        db.add(document)
+        db.flush()
+
+        ingestion_job = IngestionJob(
+            document_id=document.id,
+            status="pending",
+        )
+
+        db.add(ingestion_job)
+        db.commit()
+        db.refresh(document)
+
+        ingestion_queue.enqueue(
+            process_document_job,
+            document.id,
+            job_timeout=900,
+        )
+
+        logger.info(
+            "GitHub pull requests queued for ingestion: id=%s repo=%s",
+            document.id,
+            repo_url,
+        )
+
+    except Exception as error:
+        db.rollback()
+
+        logger.exception(
+            "Failed to queue GitHub pull requests ingestion: repo=%s",
+            repo_url,
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue GitHub pull requests ingestion: {error}",
         )
 
     return _build_document_response(document, db)

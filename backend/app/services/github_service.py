@@ -12,10 +12,10 @@ class GitHubService:
         return f"{clean_repo_url}?{urlencode({'state': state, 'limit': limit})}"
 
     def parse_issues_source(
-        self,
-        source: str,
-        state: str | None = None,
-        limit: int | None = None,
+            self,
+            source: str,
+            state: str | None = None,
+            limit: int | None = None,
     ) -> tuple[str, str, int]:
         parsed = urlparse(source)
         query_params = parse_qs(parsed.query)
@@ -62,10 +62,10 @@ class GitHubService:
         return urlunparse((parsed.scheme, parsed.netloc, clean_path, "", "", ""))
 
     def fetch_issues_text(
-        self,
-        source: str,
-        state: str | None = None,
-        limit: int | None = None,
+            self,
+            source: str,
+            state: str | None = None,
+            limit: int | None = None,
     ) -> tuple[str, str]:
         repo_url, state, limit = self.parse_issues_source(source, state, limit)
         owner, repo = self.parse_repo_url(repo_url)
@@ -117,6 +117,56 @@ Body:
         title = f"GitHub Issues: {owner}/{repo}"
 
         return title, "\n\n---\n\n".join(issue_blocks)
+
+    def fetch_pull_requests_text(
+            self,
+            repo_url: str,
+            state: str = "open",
+            limit: int = 20,
+    ) -> tuple[str, str]:
+        owner, repo = self.parse_repo_url(repo_url)
+
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+
+        response = httpx.get(
+            url,
+            params={
+                "state": state,
+                "per_page": min(limit, 100),
+            },
+            timeout=30,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "ProuMindBot/0.1",
+            },
+        )
+
+        response.raise_for_status()
+
+        pulls = response.json()
+
+        pull_blocks = []
+
+        for pull in pulls:
+            pull_blocks.append(
+                f"""
+    Pull Request #{pull.get("number")}
+    Title: {pull.get("title")}
+    State: {pull.get("state")}
+    Author: {(pull.get("user") or {}).get("login")}
+    Created At: {pull.get("created_at")}
+    Updated At: {pull.get("updated_at")}
+    Merged At: {pull.get("merged_at")}
+    URL: {pull.get("html_url")}
+
+    Body:
+    {pull.get("body") or ""}
+    """.strip()
+            )
+
+        title = f"GitHub Pull Requests: {owner}/{repo}"
+
+        return title, "\n\n---\n\n".join(pull_blocks)
 
 
 github_service = GitHubService()

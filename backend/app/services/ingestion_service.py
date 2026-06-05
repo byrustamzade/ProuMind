@@ -56,6 +56,9 @@ class IngestionService:
             elif document.source_type == "github_issues":
                 _, raw_text = github_service.fetch_issues_text(document.file_path)
                 raw_text = raw_text.strip()
+            elif document.source_type == "github_pulls":
+                _, raw_text = github_service.fetch_pull_requests_text(document.file_path)
+                raw_text = raw_text.strip()
             else:
                 raw_text = pdf_service.extract_text(document.file_path).strip()
 
