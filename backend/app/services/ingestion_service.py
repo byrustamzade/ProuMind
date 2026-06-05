@@ -15,6 +15,7 @@ from app.services.knowledge_extraction_service import knowledge_extraction_servi
 from app.services.neo4j_service import neo4j_service
 from app.services.pdf_service import pdf_service
 from app.services.web_page_service import web_page_service
+from app.services.github_service import github_service
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -52,11 +53,18 @@ class IngestionService:
             if document.source_type == "url":
                 _, raw_text = web_page_service.fetch_text(document.file_path)
                 raw_text = raw_text.strip()
+            elif document.source_type == "github_issues":
+                _, raw_text = github_service.fetch_issues_text(document.file_path)
+                raw_text = raw_text.strip()
             else:
                 raw_text = pdf_service.extract_text(document.file_path).strip()
 
             if not raw_text:
-                raise ValueError("Could not extract readable text from the PDF.")
+                source_label = {
+                    "github_issues": "GitHub issues",
+                    "url": "URL",
+                }.get(document.source_type, "PDF")
+                raise ValueError(f"Could not extract readable text from the {source_label}.")
 
             chunks = chunking_service.split_text(raw_text)
 

@@ -21,6 +21,7 @@ from app.models.source import Source  # noqa: F401
 from app.schemas.document import DocumentResponse
 from app.services.elasticsearch_service import elasticsearch_service
 from app.services.embedding_service import embedding_service
+from app.services.github_service import github_service
 from app.services.retrieval_service import retrieval_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -36,6 +37,12 @@ ingestion_queue = Queue("proumind_ingestion", connection=redis_connection)
 
 class UrlIngestionRequest(BaseModel):
     url: HttpUrl
+
+
+class GitHubIssuesIngestionRequest(BaseModel):
+    repo_url: HttpUrl
+    state: str = "open"
+    limit: int = 20
 
 
 def get_db():
@@ -259,6 +266,113 @@ def ingest_url(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to queue URL ingestion: {error}",
+        )
+
+    return _build_document_response(document, db)
+
+
+@router.post("/github/issues", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+def ingest_github_issues(
+        payload: GitHubIssuesIngestionRequest,
+        db: Session = Depends(get_db),
+):
+    repo_url = str(payload.repo_url)
+    state = payload.state.lower().strip()
+
+    if state not in github_service.valid_issue_states:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State must be one of: open, closed, all.",
+        )
+
+    limit = max(1, min(payload.limit, 100))
+    issues_source = github_service.build_issues_source(repo_url, state, limit)
+
+    content_hash = hashlib.sha256(
+        f"github_issues:{repo_url}:{state}:{limit}".encode("utf-8")
+    ).hexdigest()
+
+    existing_document = (
+        db.query(Document)
+        .filter(Document.content_hash == content_hash)
+        .first()
+    )
+
+    if existing_document:
+        if existing_document.status == "failed":
+            try:
+                existing_document.file_path = issues_source
+                existing_document.status = "pending"
+
+                ingestion_job = IngestionJob(
+                    document_id=existing_document.id,
+                    status="pending",
+                )
+
+                db.add(ingestion_job)
+                db.commit()
+                db.refresh(existing_document)
+
+                ingestion_queue.enqueue(
+                    process_document_job,
+                    existing_document.id,
+                    job_timeout=900,
+                )
+            except Exception as error:
+                db.rollback()
+
+                logger.exception("Failed to requeue GitHub issues ingestion: repo=%s", repo_url)
+
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to requeue GitHub issues ingestion: {error}",
+                )
+
+        return _build_document_response(existing_document, db)
+
+    document = Document(
+        title=f"GitHub Issues: {repo_url}",
+        source_type="github_issues",
+        file_name=None,
+        file_path=issues_source,
+        content_hash=content_hash,
+        raw_text=None,
+        status="pending",
+    )
+
+    try:
+        db.add(document)
+        db.flush()
+
+        ingestion_job = IngestionJob(
+            document_id=document.id,
+            status="pending",
+        )
+
+        db.add(ingestion_job)
+        db.commit()
+        db.refresh(document)
+
+        ingestion_queue.enqueue(
+            process_document_job,
+            document.id,
+            job_timeout=900,
+        )
+
+        logger.info(
+            "GitHub issues queued for ingestion: id=%s repo=%s",
+            document.id,
+            repo_url,
+        )
+
+    except Exception as error:
+        db.rollback()
+
+        logger.exception("Failed to queue GitHub issues ingestion: repo=%s", repo_url)
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue GitHub issues ingestion: {error}",
         )
 
     return _build_document_response(document, db)
