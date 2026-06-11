@@ -51,6 +51,13 @@ class GitHubPullsIngestionRequest(BaseModel):
     limit: int = 20
 
 
+class WebhookIngestionRequest(BaseModel):
+    source_type: str
+    url: HttpUrl
+    state: str | None = "open"
+    limit: int | None = 20
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -459,6 +466,101 @@ def ingest_github_pulls(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to queue GitHub pull requests ingestion: {error}",
+        )
+
+    return _build_document_response(document, db)
+
+
+@router.post("/webhook", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+def ingest_from_webhook(
+        payload: WebhookIngestionRequest,
+        db: Session = Depends(get_db),
+):
+    source_type = payload.source_type.lower().strip()
+    url = str(payload.url)
+
+    allowed_source_types = {
+        "url",
+        "github_issues",
+        "github_pulls",
+    }
+
+    if source_type not in allowed_source_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="source_type must be one of: url, github_issues, github_pulls.",
+        )
+
+    state = (payload.state or "open").lower().strip()
+    limit = max(1, min(payload.limit or 20, 100))
+
+    if source_type in {"github_issues", "github_pulls"} and state not in {"open", "closed", "all"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="state must be one of: open, closed, all.",
+        )
+
+    content_hash = hashlib.sha256(
+        f"webhook:{source_type}:{url}:{state}:{limit}".encode("utf-8")
+    ).hexdigest()
+
+    existing_document = (
+        db.query(Document)
+        .filter(Document.content_hash == content_hash)
+        .first()
+    )
+
+    if existing_document:
+        return _build_document_response(existing_document, db)
+
+    document = Document(
+        title=f"Webhook Source: {source_type} - {url}",
+        source_type=source_type,
+        file_name=None,
+        file_path=url,
+        content_hash=content_hash,
+        raw_text=None,
+        status="pending",
+    )
+
+    try:
+        db.add(document)
+        db.flush()
+
+        ingestion_job = IngestionJob(
+            document_id=document.id,
+            status="pending",
+        )
+
+        db.add(ingestion_job)
+        db.commit()
+        db.refresh(document)
+
+        ingestion_queue.enqueue(
+            process_document_job,
+            document.id,
+            job_timeout=900,
+        )
+
+        logger.info(
+            "Webhook ingestion queued: id=%s source_type=%s url=%s",
+            document.id,
+            source_type,
+            url,
+        )
+
+    except Exception as error:
+        db.rollback()
+
+        logger.exception(
+            "Failed to queue webhook ingestion: source_type=%s url=%s",
+            source_type,
+            url,
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue webhook ingestion: {error}",
         )
 
     return _build_document_response(document, db)
