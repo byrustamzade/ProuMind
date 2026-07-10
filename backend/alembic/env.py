@@ -21,6 +21,9 @@ if config.config_file_name is not None:
 from app.db.base import Base
 from app.models.chunk import Chunk  # noqa: F401
 from app.models.document import Document  # noqa: F401
+from app.models.evaluation_case import EvaluationCase  # noqa: F401
+from app.models.evaluation_dataset import EvaluationDataset  # noqa: F401
+from app.models.evaluation_run import EvaluationRun  # noqa: F401
 from app.models.ingestion_job import IngestionJob  # noqa: F401
 from app.models.source import Source  # noqa: F401
 
