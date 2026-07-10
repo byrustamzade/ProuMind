@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api.routes.documents import router as documents_router
@@ -6,6 +10,8 @@ from app.api.routes.ask import router as ask_router
 from app.api.routes.graph import router as graph_router
 from app.core.config import settings
 from app.db.session import SessionLocal
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(
     title=settings.app_name,
@@ -17,16 +23,27 @@ app.include_router(documents_router)
 app.include_router(ask_router)
 app.include_router(graph_router)
 
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 @app.get("/")
 def root():
-    return {
-        "name": settings.app_name,
-        "environment": settings.app_env,
-        "status": "running",
-        "version": "0.1.0",
-        "docs_url": "/docs",
-    }
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/chat")
+def chat_page():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/ui/documents")
+def documents_page():
+    return FileResponse(STATIC_DIR / "documents.html")
+
+
+@app.get("/ui/jobs")
+def jobs_page():
+    return FileResponse(STATIC_DIR / "jobs.html")
 
 
 @app.get("/health")

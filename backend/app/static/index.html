@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en" data-theme="corporate">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProuMind</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="overflow-hidden">
+  <main class="h-screen overflow-hidden bg-base-100 text-neutral">
+    <div class="mx-auto grid h-screen w-full max-w-[1680px] grid-cols-1 overflow-hidden lg:grid-cols-[380px_minmax(0,1fr)]">
+      <aside class="border-base-300 bg-white/80 px-4 py-4 shadow-sm lg:h-screen lg:overflow-y-auto lg:border-r lg:px-5">
+        <header class="mb-5 flex items-center justify-between">
+          <div>
+            <h1 class="text-2xl font-extrabold tracking-normal">ProuMind</h1>
+            <p class="text-sm text-slate-500">Knowledge workspace</p>
+          </div>
+          <a class="btn btn-ghost btn-sm" href="/docs" title="Open API docs">API</a>
+        </header>
+
+        <nav class="mb-4">
+          <ul class="menu menu-horizontal w-full rounded-box border border-base-300 bg-base-100">
+            <li><a class="active" href="/">Chat</a></li>
+            <li><a href="/ui/documents">Documents</a></li>
+            <li><a href="/ui/jobs">Jobs</a></li>
+          </ul>
+        </nav>
+
+        <section class="rounded-box border border-base-300 bg-base-100 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-base font-bold">Add knowledge</h2>
+            <span id="upload-status" class="badge badge-ghost">Ready</span>
+          </div>
+
+          <form id="upload-form" class="space-y-3">
+            <input id="pdf-input" type="file" accept="application/pdf" class="file-input file-input-bordered file-input-primary w-full">
+            <button class="btn btn-primary w-full" type="submit">
+              <span class="upload-label">Upload PDF</span>
+              <span class="loading loading-spinner loading-sm hidden"></span>
+            </button>
+          </form>
+
+          <div class="divider my-4">or</div>
+
+          <form id="url-form" class="space-y-3">
+            <input id="url-input" type="url" placeholder="https://example.com/article" class="input input-bordered w-full">
+            <button class="btn btn-outline btn-secondary w-full" type="submit">
+              Add URL
+            </button>
+          </form>
+        </section>
+      </aside>
+
+      <section class="flex min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,#dbeafe,transparent_34%),linear-gradient(135deg,#f8fafc_0%,#f1f5f9_52%,#ecfeff_100%)]">
+        <header class="shrink-0 border-base-300 bg-white/70 px-4 py-4 backdrop-blur md:px-6">
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p class="text-sm font-semibold uppercase tracking-[0.18em] text-primary">RAG chat</p>
+              <h2 class="text-3xl font-extrabold tracking-normal md:text-4xl">Ask your knowledge base</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <label class="label cursor-pointer gap-2 rounded-box border border-base-300 bg-white px-3 py-2">
+                <span class="label-text text-sm font-medium">Debug</span>
+                <input id="debug-toggle" type="checkbox" class="toggle toggle-primary toggle-sm">
+              </label>
+              <select id="result-size" class="select select-bordered select-sm bg-white">
+                <option value="3">3 sources</option>
+                <option value="5" selected>5 sources</option>
+                <option value="8">8 sources</option>
+              </select>
+            </div>
+          </div>
+        </header>
+
+        <div id="chat-log" class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 md:px-6">
+          <div class="chat chat-start">
+            <div class="chat-image avatar placeholder">
+              <div class="w-10 rounded-full bg-primary text-primary-content">
+                <span>P</span>
+              </div>
+            </div>
+            <div class="chat-header font-semibold">ProuMind</div>
+            <div class="chat-bubble chat-bubble-secondary max-w-3xl">
+              Your indexed documents are ready for grounded questions.
+            </div>
+            <div class="chat-footer opacity-60">Ready</div>
+          </div>
+        </div>
+
+        <footer class="shrink-0 border-base-300 bg-white/80 px-4 py-4 backdrop-blur md:px-6">
+          <form id="ask-form" class="flex flex-col gap-3 md:flex-row">
+            <textarea id="question-input" class="textarea textarea-bordered min-h-16 flex-1 resize-none bg-white text-base" placeholder="Ask a question..." rows="2"></textarea>
+            <button id="ask-button" class="btn btn-primary min-h-16 px-8" type="submit">
+              <span class="ask-label">Send</span>
+              <span class="loading loading-spinner loading-sm hidden"></span>
+            </button>
+          </form>
+          <div id="toast-host" class="toast toast-end z-50"></div>
+        </footer>
+      </section>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

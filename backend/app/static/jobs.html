@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" data-theme="corporate">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jobs · ProuMind</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="min-h-screen overflow-auto bg-base-100 text-neutral">
+  <div class="navbar border-b border-base-300 bg-white px-4 lg:px-8">
+    <div class="navbar-start">
+      <a class="text-xl font-extrabold" href="/">ProuMind</a>
+    </div>
+    <div class="navbar-center flex">
+      <ul class="menu menu-horizontal px-1 text-sm">
+        <li><a href="/">Chat</a></li>
+        <li><a href="/ui/documents">Documents</a></li>
+        <li><a class="active" href="/ui/jobs">Jobs</a></li>
+      </ul>
+    </div>
+    <div class="navbar-end">
+      <a class="btn btn-ghost btn-sm" href="/docs">API</a>
+    </div>
+  </div>
+
+  <main class="mx-auto max-w-7xl px-4 py-6 lg:px-8">
+    <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div>
+        <p class="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Processing</p>
+        <h1 class="text-3xl font-extrabold tracking-normal">Ingestion jobs</h1>
+      </div>
+      <button id="refresh-jobs-page" class="btn btn-primary">Refresh</button>
+    </div>
+
+    <section id="job-stats" class="stats stats-vertical mb-6 w-full border border-base-300 bg-white shadow-sm lg:stats-horizontal"></section>
+
+    <section class="rounded-box border border-base-300 bg-white">
+      <div class="overflow-x-auto">
+        <table class="table table-zebra">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Document</th>
+              <th>Status</th>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Created</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-table"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/jobs-page.js"></script>
+</body>
+</html>
